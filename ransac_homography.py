@@ -7,6 +7,8 @@ from itertools import product, combinations
 from math import sin, cos, tan, pi, log
 from collections import defaultdict
 
+##### code to generate examples #####
+
 def gen_grid_pts(symmetric, grid_size):
     """Makes grid according to specifications, centered at the origin with largest dimension approximately filling [-1, 1]"""
     if symmetric:
@@ -54,6 +56,8 @@ def add_detection_noise(grid, sigma):
     grid[:, :2] += sigma * np.random.randn(grid.shape[0], 2)
     return grid
 
+##### circlegrid finding algorithm #####
+
 def estimate_homography(pts):
     """estimate homography from four points in + pattern"""
     A = np.zeros((8, 9))
@@ -70,43 +74,6 @@ def estimate_homography(pts):
                 ]
     _, _, v = np.linalg.svd(A)
     return v[-1, :].reshape(3, 3)
-
-def check_line(pts_rounded, line_ids):
-    """Verify that pts_rounded specified in line_ids are in a line, with -1 indicating missing points"""
-    if np.sum(line_ids != -1) < 3:
-        return True
-    idx, pts = list(zip(*[(i, pts_rounded[pt_id]) for i, pt_id in enumerate(line_ids) if pt_id != -1]))
-    v = (pts[1] - pts[0])/(idx[1] - idx[0])
-    for i in range(len(idx) - 1):
-        if not np.allclose(pts[i+1] - pts[i], v * (idx[1] - idx[0])):
-            print(i, pts[i+1], pts[i], v, idx[i + 1], idx[i])
-            return False
-    return True
-
-
-# check that lines make lines
-def check_grid(pts_rounded, grid_ids, grid_size, symmetric):
-    print("checking")
-    print(grid_ids)
-    """Check that points for lines along rows and columns of grid"""
-    for i in range(grid_size[0]):
-        if not check_line(pts_rounded, grid_ids[i, :]):
-            print("exit 1")
-            return False
-    for j in range(0, grid_size[1]):
-        if symmetric:
-            if not check_line(pts_rounded, grid_ids[:, j]):
-                print("exit 2")
-                return False
-        else:
-            if not check_line(pts_rounded, grid_ids[::2, j]):
-                print("exit 3")
-                return False
-            if not check_line(pts_rounded, grid_ids[1::2, j]):
-                print("exit 4", j, grid_ids[1::2, j], pts_rounded[grid_ids[1::2, j], :])
-                return False
-    print("OK")
-    return True
 
 def find_grid_points(pts, seed, grid_size, symmetric):
     """Identify which points in pts are near integer coordinates"""
@@ -166,11 +133,11 @@ def find_grid_points(pts, seed, grid_size, symmetric):
         else:
             y_axis_limits.append(None)
 
-    grid_ids = -1 * np.ones(grid_size, dtype=int)
-
     # usually just one pair of axes meets the above criteria
+    grid_ids = None
     for i_x, i_y in product(range(len(axis_lines)), repeat=2):
         if i_x == i_y or x_axis_limits[i_x] is None or y_axis_limits[i_y] is None: continue
+        grid_ids = -1 * np.ones(grid_size, dtype=int)
 
         x_axis = axis_lines[i_x]
         y_axis = axis_lines[i_y]
@@ -184,20 +151,22 @@ def find_grid_points(pts, seed, grid_size, symmetric):
                         np.r_[x_axis[:2], -(x_axis_limits[i_x][0] + 2*j + i%2)],
                         np.r_[y_axis[:2], -(y_axis_limits[i_y][0] + i)])
             pt = (pt / pt[2]).astype(int)
-            grid_ids[i, j] = np.argmin(np.linalg.norm(pts_rounded - pt, axis=1))
+            pt_id = np.argmin(np.linalg.norm(pts_rounded - pt, axis=1))
+            if np.linalg.norm(pts_rounded[pt_id, :] - pt) > 0.5:
+                grid_ids = None
+                break
+            grid_ids[i, j] = pt_id
 
     return grid_ids
 
 def ransac_homography(pts, grid_size, symmetric):
     """find + pattern to recover homography"""
 
-    expected_num_pts = grid_size[0] * grid_size[1]
     cos_thresh = 0.99
     found = False
     seeds = list(range(pts.shape[0]))
     while len(seeds) > 0:
         seed_i = np.random.randint(len(seeds))
-        print("trying ", seed_i)
         seed = seeds.pop(seed_i)
         pt = pts[seed, :]
         dists = np.linalg.norm(pts - pt, axis=1)
@@ -222,29 +191,12 @@ def ransac_homography(pts, grid_size, symmetric):
             grid_ids = find_grid_points(pts_plane, seed, grid_size, symmetric)
             if grid_ids is None: continue
 
-            plt.subplot(1, 2, 1)
-            plt.plot(pts[:expected_num_pts, 0], pts[:expected_num_pts, 1], '.')
-            plt.plot(pts[expected_num_pts:, 0], pts[expected_num_pts:, 1], '.')
-            plt.plot(pts[n_plus, 0], pts[n_plus, 1], 'o')
-            plt.plot(pts[grid_ids.flat, 0], pts[grid_ids.flat, 1], ':')
-            plt.gca().set_aspect('equal')
-            plt.subplot(1, 2, 2)
-            #plt.plot(pts_plane[list(inliers), 0], pts_plane[list(inliers), 1], '.')
-            #pp_rounded = np.rint(pts_plane)
-            #plt.plot(pp_rounded[list(inliers), 0], pp_rounded[list(inliers), 1], '.')
-            plt.plot(pts_plane[:, 0], pts_plane[:, 1], '.')
-            plt.plot(pts_plane[grid_ids.flat, 0], pts_plane[grid_ids.flat, 1], ':')
-            plt.gca().set_aspect('equal')
-            plt.gca().set_xticks(range(*map(int, plt.gca().get_xlim())))
-            plt.gca().set_yticks(range(*map(int, plt.gca().get_ylim())))
-            plt.gca().grid()
-            plt.show()
             return grid_ids
 
 if __name__ == "__main__":
 
-    asymm_grid_size = (10, 4)
-    symm_grid_size = (5, 4)
+    asymm_grid_size = (np.random.randint(6, 15), np.random.randint(3, 8))
+    symm_grid_size = tuple(np.random.randint(3, 15, size=(2,)))
 
     H = np.array([[ 0.6 + 0.2*np.random.randn(),  0.1*np.random.randn(), 0.5*np.random.randn()],
                   [ 0.1*np.random.randn(),  0.5 + 0.3*np.random.randn(),  0.5*np.random.randn()],
@@ -254,8 +206,8 @@ if __name__ == "__main__":
     theta = np.random.randn()
     H @= np.array([[cos(theta), sin(theta), 0], [-sin(theta), cos(theta), 0], [0, 0, 1]])
 
-    K1 = -1e-2
-    K2 = 5e-5
+    K1 = 1e-2 * np.random.randn()
+    K2 = 1e-4 * np.random.randn()
 
     num_noise_pts = 20
     noise_limit = 2
@@ -277,42 +229,20 @@ if __name__ == "__main__":
                     ex_dist
                     ), H, K1, K2), sigma)
 
-    ransac_homography(asymm_grid, asymm_grid_size, False)
-    ransac_homography(symm_grid, symm_grid_size, True)
-    plt.subplot(1, 2, 1)
-    plt.plot(symm_grid[:-num_noise_pts, 0], symm_grid[:-num_noise_pts, 1], 'o')
-    plt.plot(symm_grid[-num_noise_pts:, 0], symm_grid[-num_noise_pts:, 1], 'o')
-    for i, pt in enumerate(symm_grid):
-        plt.gca().annotate(str(i), pt[:2], fontsize="x-small")
-    #xlim = plt.gca().get_xlim()
-    #ylim = plt.gca().get_ylim()
-    #left_edge = np.array([1, 0, -xlim[0]])
-    #right_edge = np.array([1, 0, -xlim[1]])
-    #for line in symm_lines.items():
-    #    left_pt = np.cross(left_edge, line[1])
-    #    left_pt /= left_pt[2]
-    #    right_pt = np.cross(right_edge, line[1])
-    #    right_pt /= right_pt[2]
-    #    plt.plot([left_pt[0], right_pt[0]], [left_pt[1], right_pt[1]], linewidth=0.5)
-    #plt.gca().set_xlim(xlim)
-    #plt.gca().set_ylim(ylim)
-    plt.gca().set_aspect('equal')
-    plt.subplot(1, 2, 2)
-    plt.plot(asymm_grid[:-num_noise_pts, 0], asymm_grid[:-num_noise_pts, 1], 'o')
-    plt.plot(asymm_grid[-num_noise_pts:, 0], asymm_grid[-num_noise_pts:, 1], 'o')
-    for i, pt in enumerate(asymm_grid):
-        plt.gca().annotate(str(i), pt[:2], fontsize="x-small")
-    #xlim = plt.gca().get_xlim()
-    #ylim = plt.gca().get_ylim()
-    #left_edge = np.array([1, 0, -xlim[0]])
-    #right_edge = np.array([1, 0, -xlim[1]])
-    #for line in asymm_lines.items():
-    #    left_pt = np.cross(left_edge, line[1])
-    #    left_pt /= left_pt[2]
-    #    right_pt = np.cross(right_edge, line[1])
-    #    right_pt /= right_pt[2]
-    #    plt.plot([left_pt[0], right_pt[0]], [left_pt[1], right_pt[1]], linewidth=0.5)
-    #plt.gca().set_xlim(xlim)
-    #plt.gca().set_ylim(ylim)
-    plt.gca().set_aspect('equal')
+    for pts, grid_size, symm in ((asymm_grid, asymm_grid_size, False), (symm_grid, symm_grid_size, True)):
+        expected_num_pts = grid_size[0] * grid_size[1]
+        grid_ids = ransac_homography(pts, grid_size, symm)
+        if grid_ids is None or set(range(expected_num_pts)) != set(grid_ids.flat):
+            print("failure detected")
+            with open("failures.txt", "a") as out_file:
+                print(grid_size, symm, file=out_file)
+                print(pts, file=out_file)
+                print("---\n", file=out_file)
+        if grid_ids is None:
+            continue
+        plt.subplot(1, 2, symm+1)
+        plt.plot(pts[:expected_num_pts, 0], pts[:expected_num_pts, 1], '.')
+        plt.plot(pts[expected_num_pts:, 0], pts[expected_num_pts:, 1], '.')
+        plt.plot(pts[grid_ids.flat, 0], pts[grid_ids.flat, 1], ':')
+        plt.gca().set_aspect('equal')
     plt.show()
