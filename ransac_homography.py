@@ -161,6 +161,7 @@ def find_grid_points(pts, seed, grid_size, symmetric):
 
 def ransac_homography(pts, grid_size, symmetric):
     """find + pattern to recover homography"""
+    assert len(pts.shape) == 2 and pts.shape[1] == 3, f"{pts.shape = }"
 
     cos_thresh = 0.99
     found = False
@@ -173,11 +174,12 @@ def ransac_homography(pts, grid_size, symmetric):
         nearest_neighbors = np.argsort(dists)
         assert dists[nearest_neighbors[0]] < 1e-9, f"{nearest_neighbors}"
 
-        for n_plus in combinations(nearest_neighbors[:10], 4):
+        for n_plus in combinations(nearest_neighbors[1:11], 4):
             n_pts = pts[n_plus, :]
             intersection = np.cross(np.cross(n_pts[0], n_pts[1]), np.cross(n_pts[2], n_pts[3]))
             intersection /= intersection[2]
-            if np.linalg.norm(intersection - pt) > 1e-2:
+            if np.linalg.norm(intersection - pt) > 1e-2 * max(np.linalg.norm(n_pts[0] - n_pts[1]),
+                                                              np.linalg.norm(n_pts[2] - n_pts[3])):
                 continue
 
             h = estimate_homography(n_pts)
@@ -186,10 +188,12 @@ def ransac_homography(pts, grid_size, symmetric):
             pts_plane /= pts_plane[:, 2:]
 
             # first check: does this map the seed to the origin?
-            if np.linalg.norm(pts_plane[seed, :2]) > 1e-2: continue
+            if np.linalg.norm(pts_plane[seed, :2]) > 1e-2:
+                continue
 
             grid_ids = find_grid_points(pts_plane, seed, grid_size, symmetric)
-            if grid_ids is None: continue
+            if grid_ids is None:
+                continue
 
             return grid_ids
 
